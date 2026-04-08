@@ -161,7 +161,7 @@ const LoginPage = () => {
     setLoading(true);
     setError("");
     try {
-      await axios.post("/api/pw/get-otp", { phone });
+      await axios.post("/api/v1/pw/get-otp", { phone });
       setStep("otp");
     } catch (err: any) {
       const errorMsg = err.response?.data?.message || err.response?.data?.error || "Failed to send OTP";
@@ -178,7 +178,7 @@ const LoginPage = () => {
     setLoading(true);
     setError("");
     try {
-      const res = await axios.post("/api/pw/verify-otp", { phone, otp });
+      const res = await axios.post("/api/v1/pw/verify-otp", { phone, otp });
       localStorage.setItem("pw_token", res.data.data.access_token);
       localStorage.setItem("pw_log_id", res.data.logId);
       navigate("/dashboard");
@@ -194,7 +194,7 @@ const LoginPage = () => {
     setLoading(true);
     setError("");
     try {
-      const res = await axios.post("/api/pw/login-token", { token });
+      const res = await axios.post("/api/v1/pw/login-token", { token });
       localStorage.setItem("pw_token", token);
       localStorage.setItem("pw_log_id", res.data.logId);
       navigate("/dashboard");
@@ -381,7 +381,7 @@ const DashboardPage = () => {
       }
 
       try {
-        const res = await axios.get("/api/pw/batches", {
+        const res = await axios.get("/api/v1/pw/batches", {
           headers: { Authorization: `Bearer ${token}` }
         });
         setBatches(res.data.data);
@@ -402,7 +402,7 @@ const DashboardPage = () => {
   const handleLogout = async () => {
     try {
       const logId = localStorage.getItem("pw_log_id");
-      await axios.post("/api/pw/logout", { logId });
+      await axios.post("/api/v1/pw/logout", { logId });
     } catch (e) {
       console.error("Logout failed", e);
     } finally {
@@ -512,10 +512,10 @@ const BatchDetailsPage = () => {
 
       try {
         const [batchRes, subjectsRes] = await Promise.all([
-          axios.get(`/api/pw/batch-details/${batchId}`, {
+          axios.get(`/api/v1/pw/batch-details/${batchId}`, {
             headers: { Authorization: `Bearer ${token}` }
           }),
-          axios.get(`/api/pw/batch-subjects/${batchId}`, {
+          axios.get(`/api/v1/pw/batch-subjects/${batchId}`, {
             headers: { Authorization: `Bearer ${token}` }
           })
         ]);
@@ -535,7 +535,7 @@ const BatchDetailsPage = () => {
     const token = localStorage.getItem("pw_token");
     setLoadingContents(true);
     try {
-      const res = await axios.get(`/api/pw/subject-contents/${batchId}/${subjectId}`, {
+      const res = await axios.get(`/api/v1/pw/subject-contents/${batchId}/${subjectId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setContents(res.data.data);
@@ -804,7 +804,7 @@ const AdminLoginPage = () => {
     setLoading(true);
     setError("");
     try {
-      const res = await axios.post("/api/admin/login", { username, password });
+      const res = await axios.post("/api/v1/admin/login", { username, password });
       localStorage.setItem("admin_token", res.data.token);
       navigate("/admin/dashboard");
     } catch (err: any) {
@@ -880,10 +880,10 @@ const AdminDashboard = () => {
 
     try {
       const [logsRes, statsRes] = await Promise.all([
-        axios.get("/api/admin/logs", {
+        axios.get("/api/v1/admin/logs", {
           headers: { Authorization: `Bearer ${adminToken}` }
         }),
-        axios.get("/api/admin/stats", {
+        axios.get("/api/v1/admin/stats", {
           headers: { Authorization: `Bearer ${adminToken}` }
         })
       ]);

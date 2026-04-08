@@ -100,7 +100,7 @@ async function startServer() {
     return headers;
   };
 
-  app.post("/api/pw/get-otp", async (req, res) => {
+  app.post("/api/v1/pw/get-otp", async (req, res) => {
     try {
       const { phone } = req.body;
       
@@ -145,7 +145,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/pw/verify-otp", async (req, res) => {
+  app.post("/api/v1/pw/verify-otp", async (req, res) => {
     try {
       const { phone, otp } = req.body;
       const response = await axios.post(
@@ -207,7 +207,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/pw/login-token", async (req, res) => {
+  app.post("/api/v1/pw/login-token", async (req, res) => {
     try {
       const { token } = req.body;
       const response = await axios.get("https://api.penpencil.co/v3/batches/my-batches", {
@@ -243,7 +243,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/pw/batches", async (req, res) => {
+  app.get("/api/v1/pw/batches", async (req, res) => {
     try {
       const token = req.headers.authorization;
       const response = await axios.get("https://api.penpencil.co/v3/batches/my-batches", {
@@ -257,7 +257,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/pw/batch-details/:batchId", async (req, res) => {
+  app.get("/api/v1/pw/batch-details/:batchId", async (req, res) => {
     try {
       const { batchId } = req.params;
       const token = req.headers.authorization;
@@ -270,7 +270,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/admin/login", (req, res) => {
+  app.post("/api/v1/admin/login", (req, res) => {
     const { username, password } = req.body;
     if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
       const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: "24h" });
@@ -280,7 +280,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/admin/logs", adminAuth, async (req, res) => {
+  app.get("/api/v1/admin/logs", adminAuth, async (req, res) => {
     try {
       const logsRef = rtdb.ref("analytics/logs");
       const snapshot = await logsRef.once("value");
@@ -292,7 +292,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/admin/stats", adminAuth, async (req, res) => {
+  app.get("/api/v1/admin/stats", adminAuth, async (req, res) => {
     try {
       const statsRef = rtdb.ref("analytics/stats");
       const snapshot = await statsRef.once("value");
@@ -303,7 +303,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/pw/logout", async (req, res) => {
+  app.post("/api/v1/pw/logout", async (req, res) => {
     try {
       const { logId } = req.body;
       if (logId) {
@@ -313,6 +313,44 @@ async function startServer() {
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Logout failed" });
+    }
+  });
+
+  app.get("/api/v1/pw/batch-subjects/:batchId", async (req, res) => {
+    try {
+      const { batchId } = req.params;
+      const token = req.headers.authorization?.split(" ")[1];
+      if (!token) return res.status(401).json({ error: "No token provided" });
+
+      const response = await axios.get(`https://api.penpencil.co/v3/batches/${batchId}/subjects`, {
+        params: { organisationId: PW_ORG_ID },
+        headers: getPWHeaders(token),
+      });
+      res.json(response.data);
+    } catch (error: any) {
+      res.status(error.response?.status || 500).json(error.response?.data || { error: "Failed to fetch subjects" });
+    }
+  });
+
+  app.get("/api/v1/pw/subject-contents/:batchId/:subjectId", async (req, res) => {
+    try {
+      const { batchId, subjectId } = req.params;
+      const { page = 1, contentType = "" } = req.query;
+      const token = req.headers.authorization?.split(" ")[1];
+      if (!token) return res.status(401).json({ error: "No token provided" });
+
+      const response = await axios.get(`https://api.penpencil.co/v3/batches/${batchId}/subject/${subjectId}/contents`, {
+        params: { 
+          organisationId: PW_ORG_ID,
+          page,
+          contentType,
+          tag: ""
+        },
+        headers: getPWHeaders(token),
+      });
+      res.json(response.data);
+    } catch (error: any) {
+      res.status(error.response?.status || 500).json(error.response?.data || { error: "Failed to fetch contents" });
     }
   });
 
