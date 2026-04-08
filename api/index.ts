@@ -9,7 +9,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
-import firebaseConfig from "./firebase-applet-config.json";
+import firebaseConfig from "../firebase-applet-config.json";
 import { initializeApp as initializeClientApp } from "firebase/app";
 import { getDatabase, ref, set, push, onValue, update } from "firebase/database";
 
