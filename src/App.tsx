@@ -24,11 +24,16 @@ import {
   Info,
   PlayCircle,
   FileText,
-  RefreshCw
+  RefreshCw,
+  ExternalLink,
+  Download,
+  X
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import shaka from "shaka-player/dist/shaka-player.ui.js";
+import "shaka-player/dist/controls.css";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -495,10 +500,7 @@ const BatchDetailsPage = () => {
   const { batchId } = useParams();
   const [batch, setBatch] = useState<any>(null);
   const [subjects, setSubjects] = useState<any[]>([]);
-  const [selectedSubject, setSelectedSubject] = useState<any>(null);
-  const [contents, setContents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingContents, setLoadingContents] = useState(false);
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
@@ -511,7 +513,7 @@ const BatchDetailsPage = () => {
       }
 
       try {
-        const [batchRes, subjectsRes] = await Promise.all([
+        const [batchRes, subjectsRes] = await Promise.allSettled([
           axios.get(`/api/v1/pw/batch-details/${batchId}`, {
             headers: { Authorization: `Bearer ${token}` }
           }),
@@ -519,10 +521,29 @@ const BatchDetailsPage = () => {
             headers: { Authorization: `Bearer ${token}` }
           })
         ]);
-        setBatch(batchRes.data.data);
-        setSubjects(subjectsRes.data.data);
+
+        let batchData = null;
+        let subjectsData = [];
+
+        if (batchRes.status === "fulfilled") {
+          batchData = batchRes.value.data.data;
+          if (batchData && batchData.subjects) {
+            subjectsData = batchData.subjects;
+          }
+        }
+
+        if (subjectsRes.status === "fulfilled") {
+          subjectsData = subjectsRes.value.data.data || subjectsData;
+        }
+
+        if (!batchData) {
+          throw new Error("Failed to load course details");
+        }
+
+        setBatch(batchData);
+        setSubjects(subjectsData);
       } catch (err: any) {
-        setError("Failed to load course data");
+        setError(err.message || "Failed to load course data");
       } finally {
         setLoading(false);
       }
@@ -530,21 +551,6 @@ const BatchDetailsPage = () => {
 
     fetchData();
   }, [batchId, navigate]);
-
-  const fetchContents = async (subjectId: string) => {
-    const token = localStorage.getItem("pw_token");
-    setLoadingContents(true);
-    try {
-      const res = await axios.get(`/api/v1/pw/subject-contents/${batchId}/${subjectId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setContents(res.data.data);
-    } catch (err) {
-      console.error("Failed to fetch contents");
-    } finally {
-      setLoadingContents(false);
-    }
-  };
 
   if (loading) {
     return (
@@ -613,94 +619,21 @@ const BatchDetailsPage = () => {
               />
             </div>
 
-            {/* Subjects Section */}
-            <div className="bg-white/5 border border-white/10 rounded-3xl p-6 md:p-8 space-y-6">
-              <div className="flex items-center gap-3 mb-2">
-                <BookOpen className="w-5 h-5 text-purple-500" />
-                <h2 className="text-xl font-bold">Course Content</h2>
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {subjects.map((subject: any) => (
-                  <button
-                    key={subject._id}
-                    onClick={() => {
-                      setSelectedSubject(subject);
-                      fetchContents(subject._id);
-                    }}
-                    className={cn(
-                      "p-4 bg-white/5 border rounded-2xl flex items-center gap-4 transition-all text-left",
-                      selectedSubject?._id === subject._id ? "border-purple-500 bg-purple-500/5" : "border-white/10 hover:border-white/20"
-                    )}
-                  >
-                    <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-500">
-                      <Database className="w-5 h-5" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className="font-bold text-sm truncate">{subject.name}</h4>
-                      <p className="text-[10px] text-white/30 uppercase tracking-wider mt-1">Click to view content</p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-
-              {selectedSubject && (
-                <motion.div 
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="mt-8 space-y-4 pt-8 border-t border-white/5"
-                >
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-bold text-lg text-purple-400">{selectedSubject.name} - Lectures</h3>
-                    {loadingContents && <div className="w-4 h-4 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />}
-                  </div>
-
-                  <div className="space-y-3">
-                    {contents.length > 0 ? contents.map((content: any) => (
-                      <div key={content._id} className="p-4 bg-white/5 border border-white/10 rounded-2xl space-y-3">
-                        <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-500">
-                            {content.contentType === 'video' ? <PlayCircle className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="font-bold text-sm leading-tight">{content.topic}</p>
-                            <p className="text-[10px] text-white/30 mt-1 uppercase font-bold tracking-widest">{content.contentType}</p>
-                          </div>
-                        </div>
-                        {content.contentType === 'video' && content.url && (
-                          <div className="aspect-video rounded-xl overflow-hidden bg-black border border-white/5">
-                            <iframe 
-                              src={content.url} 
-                              className="w-full h-full" 
-                              allowFullScreen 
-                              referrerPolicy="no-referrer"
-                            />
-                          </div>
-                        )}
-                      </div>
-                    )) : !loadingContents && (
-                      <p className="text-center py-10 text-white/20 italic text-sm">No content available for this subject</p>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-            </div>
-
             {/* Faculties Section */}
-            {batch.faculties && batch.faculties.length > 0 && (
+            {(batch.faculties || (subjects && subjects.flatMap(s => s.teacherIds || []).filter((v, i, a) => a.findIndex(t => t._id === v._id) === i))).length > 0 && (
               <div className="bg-white/5 border border-white/10 rounded-3xl p-8 space-y-6">
                 <div className="flex items-center gap-3 mb-2">
                   <Users className="w-5 h-5 text-green-500" />
                   <h2 className="text-xl font-bold">Your Instructors</h2>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {batch.faculties.map((faculty: any) => (
+                  {(batch.faculties || (subjects && subjects.flatMap(s => s.teacherIds || []).filter((v, i, a) => a.findIndex(t => t._id === v._id) === i))).map((faculty: any) => (
                     <div key={faculty._id} className="flex items-center gap-4 p-4 bg-white/5 rounded-2xl border border-white/10">
                       <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-green-500/30">
-                        {faculty.image?.baseUrl ? (
+                        {faculty.imageId?.baseUrl || faculty.image?.baseUrl ? (
                           <img 
-                            src={`${faculty.image.baseUrl}${faculty.image.key}`} 
-                            alt={faculty.name}
+                            src={`${faculty.imageId?.baseUrl || faculty.image?.baseUrl}${faculty.imageId?.key || faculty.image?.key}`} 
+                            alt={faculty.firstName || faculty.name}
                             className="w-full h-full object-cover"
                           />
                         ) : (
@@ -710,8 +643,8 @@ const BatchDetailsPage = () => {
                         )}
                       </div>
                       <div>
-                        <h4 className="font-bold text-white">{faculty.name}</h4>
-                        <p className="text-sm text-white/50">{faculty.qualification || "Expert Faculty"}</p>
+                        <h4 className="font-bold text-white">{faculty.firstName ? `${faculty.firstName} ${faculty.lastName}` : faculty.name}</h4>
+                        <p className="text-sm text-white/50">{faculty.qualification || faculty.subject || "Expert Faculty"}</p>
                       </div>
                     </div>
                   ))}
@@ -747,8 +680,11 @@ const BatchDetailsPage = () => {
                 </div>
               </div>
 
-              <Button className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-lg shadow-lg shadow-blue-600/20">
-                Continue Learning
+              <Button 
+                onClick={() => navigate(`/batch/${batchId}/learn`)}
+                className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-lg shadow-lg shadow-blue-600/20"
+              >
+                Start Learning
               </Button>
             </div>
 
@@ -1255,6 +1191,483 @@ const AdminDashboard = () => {
   );
 };
 
+const VideoPlayerPage = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { videoUrl, token, title, backUrl, content } = location.state || {};
+
+  const videoContainerRef = React.useRef<HTMLDivElement>(null);
+  const videoRef = React.useRef<HTMLVideoElement>(null);
+  const playerRef = React.useRef<any>(null);
+  const uiRef = React.useRef<any>(null);
+  const [isHovering, setIsHovering] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    let timeout: NodeJS.Timeout;
+    const handleMouseMove = () => {
+      setIsHovering(true);
+      clearTimeout(timeout);
+      timeout = setTimeout(() => setIsHovering(false), 3000);
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      clearTimeout(timeout);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!videoUrl || !token) {
+      navigate(-1);
+      return;
+    }
+
+    let isMounted = true;
+
+    const initPlayer = async () => {
+      try {
+        setIsLoading(true);
+        let finalVideoUrl = videoUrl;
+        let extractedKid = null;
+        let extractedKey = null;
+
+        // Try to extract stream details using the provided API via our proxy to bypass CORS
+        try {
+          const cleanToken = token.replace("Bearer ", "");
+          const res = await axios.post("/api/v1/proxy/extract", {
+            mpd_url: videoUrl,
+            bearer_token: cleanToken
+          });
+
+          console.log("Extraction API Response:", res.data);
+
+          if (res.data) {
+            if (res.data.mpd_url) {
+              finalVideoUrl = res.data.mpd_url;
+            } else if (res.data.video) {
+              finalVideoUrl = res.data.video;
+            } else if (res.data.url) {
+              finalVideoUrl = res.data.url;
+            } else if (res.data.m3u8) {
+              finalVideoUrl = res.data.m3u8;
+            }
+
+            if (res.data.kid && res.data.key) {
+              extractedKid = res.data.kid;
+              extractedKey = res.data.key;
+            } else if (res.data.keys && res.data.keys.length > 0) {
+              extractedKid = res.data.keys[0].kid;
+              extractedKey = res.data.keys[0].k || res.data.keys[0].key;
+            }
+          }
+        } catch (apiErr) {
+          console.error("Extraction API failed, falling back to original URL", apiErr);
+        }
+
+        if (!isMounted) return;
+        setIsLoading(false);
+
+        if (!videoRef.current || !videoContainerRef.current) return;
+
+        shaka.polyfill.installAll();
+
+        if (shaka.Player.isBrowserSupported()) {
+          const player = new shaka.Player(videoRef.current);
+          playerRef.current = player;
+
+          // Initialize Shaka UI
+          const ui = new shaka.ui.Overlay(player, videoContainerRef.current, videoRef.current);
+          uiRef.current = ui;
+          
+          ui.configure({
+            controlPanelElements: [
+              'play_pause',
+              'time_and_duration',
+              'spacer',
+              'mute',
+              'volume',
+              'fullscreen',
+              'overflow_menu'
+            ],
+            addSeekBar: true,
+          });
+
+          const playerConfig: any = {
+            streaming: {
+              bufferingGoal: 30,
+              rebufferingGoal: 2,
+              bufferBehind: 30,
+            }
+          };
+
+          // Use extracted keys or fallback to content object
+          let kid = extractedKid || content?.videoDetails?.kid || content?.kid || content?.drm?.kid || content?.videoDetails?.drm?.kid || content?.videoDetails?.drmKeys?.kid || content?.drmKeys?.kid;
+          let key = extractedKey || content?.videoDetails?.key || content?.key || content?.drm?.key || content?.videoDetails?.drm?.key || content?.videoDetails?.drmKeys?.key || content?.drmKeys?.key;
+
+          if (kid && key) {
+            // Ensure they are strings and remove hyphens for Shaka Player
+            const kidStr = String(kid).replace(/-/g, '');
+            const keyStr = String(key).replace(/-/g, '');
+            
+            console.log("Configuring ClearKey DRM with kid:", kidStr);
+            playerConfig.drm = {
+              clearKeys: {
+                [kidStr]: keyStr
+              }
+            };
+          }
+
+          player.configure(playerConfig);
+
+          // Inject Token only for original domain to prevent CORS issues on extracted links
+          player.getNetworkingEngine().registerRequestFilter((type: any, request: any) => {
+            const requestUrl = request.uris[0];
+            const cleanToken = token.replace("Bearer ", "");
+            
+            try {
+              const originalHost = new URL(videoUrl).hostname;
+              const finalHost = new URL(finalVideoUrl).hostname;
+              
+              // Inject token if the request is to the original host or the final host
+              if (requestUrl.includes(originalHost) || requestUrl.includes(finalHost)) {
+                request.headers['Authorization'] = `Bearer ${cleanToken}`;
+              }
+            } catch (e) {
+              // Fallback if URL parsing fails
+              request.headers['Authorization'] = `Bearer ${cleanToken}`;
+            }
+          });
+
+          try {
+            await player.load(finalVideoUrl);
+          } catch (e: any) {
+            console.error('Error loading video', e);
+            setErrorMsg("Failed to load video stream.");
+          }
+        } else {
+          setErrorMsg('Browser not supported!');
+        }
+      } catch (err) {
+        console.error("Player initialization error:", err);
+        setErrorMsg("Failed to initialize player.");
+      }
+    };
+
+    initPlayer();
+
+    return () => {
+      isMounted = false;
+      if (uiRef.current) {
+        uiRef.current.destroy();
+      }
+      if (playerRef.current) {
+        playerRef.current.destroy();
+      }
+    };
+  }, [videoUrl, token, navigate, content]);
+
+  if (!videoUrl) return null;
+
+  return (
+    <div className="min-h-screen bg-black text-white flex flex-col relative overflow-hidden">
+      {/* Premium Header */}
+      <div 
+        className={cn(
+          "absolute top-0 left-0 right-0 p-6 flex items-center gap-6 bg-gradient-to-b from-black/90 via-black/50 to-transparent z-50 transition-opacity duration-500",
+          isHovering ? "opacity-100" : "opacity-0"
+        )}
+      >
+        <button 
+          onClick={() => navigate(backUrl || -1)}
+          className="p-3 bg-white/10 hover:bg-white/20 rounded-full backdrop-blur-xl transition-all hover:scale-105 active:scale-95"
+        >
+          <ArrowLeft className="w-6 h-6" />
+        </button>
+        <div>
+          <h1 className="text-xl md:text-2xl font-bold drop-shadow-lg">{title || "Video Player"}</h1>
+          <p className="text-sm text-white/50 flex items-center gap-2 mt-1">
+            <ShieldCheck className="w-4 h-4 text-green-400" />
+            Protected Stream
+          </p>
+        </div>
+      </div>
+
+      {/* Video Container with Shaka UI */}
+      <div ref={videoContainerRef} className="flex-1 flex items-center justify-center bg-black relative w-full h-full mx-auto">
+        {isLoading && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black z-40">
+            <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
+            <p className="text-white/70 font-medium">Extracting secure stream...</p>
+          </div>
+        )}
+        
+        {errorMsg && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black z-40">
+            <div className="p-6 bg-red-500/10 border border-red-500/20 rounded-2xl text-center max-w-md">
+              <p className="text-red-400 font-medium mb-2">{errorMsg}</p>
+              <button 
+                onClick={() => navigate(backUrl || -1)}
+                className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors text-sm"
+              >
+                Go Back
+              </button>
+            </div>
+          </div>
+        )}
+
+        <video 
+          ref={videoRef}
+          className="w-full h-full max-h-screen outline-none"
+          autoPlay
+          crossOrigin="anonymous"
+        />
+      </div>
+    </div>
+  );
+};
+
+const BatchLearnPage = () => {
+  const { batchId } = useParams();
+  const [subjects, setSubjects] = useState<any[]>([]);
+  const [selectedSubject, setSelectedSubject] = useState<any>(null);
+  const [contents, setContents] = useState<any[]>([]);
+  const [loadingSubjects, setLoadingSubjects] = useState(true);
+  const [loadingContents, setLoadingContents] = useState(false);
+  const [expandedTopic, setExpandedTopic] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"video" | "notes" | "dpp">("video");
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const fetchSubjects = async () => {
+      const token = localStorage.getItem("pw_token");
+      if (!token) {
+        navigate("/");
+        return;
+      }
+      try {
+        const res = await axios.get(`/api/v1/pw/batch-subjects/${batchId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        setSubjects(res.data.data || []);
+      } catch (err) {
+        console.error("Failed to fetch subjects", err);
+      } finally {
+        setLoadingSubjects(false);
+      }
+    };
+    fetchSubjects();
+  }, [batchId, navigate]);
+
+  const fetchContents = async (subjectId: string) => {
+    const token = localStorage.getItem("pw_token");
+    setLoadingContents(true);
+    setExpandedTopic(null);
+    try {
+      const res = await axios.get(`/api/v1/pw/subject-contents/${batchId}/${subjectId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setContents(res.data.data || []);
+    } catch (err) {
+      console.error("Failed to fetch contents");
+      setContents([]);
+    } finally {
+      setLoadingContents(false);
+    }
+  };
+
+  const groupedContents = useMemo(() => {
+    const groups: { [key: string]: { video: any[], notes: any[], dpp: any[] } } = {};
+    contents.forEach(c => {
+      const topic = c.topic || "Other";
+      if (!groups[topic]) groups[topic] = { video: [], notes: [], dpp: [] };
+      
+      const isVideo = c.contentType === "video" || c.urlType === "penpencilvdo" || c.videoDetails || c.isVideoLecture;
+      const isNotes = c.contentType === "notes" || c.contentType === "pdf" || (!isVideo && c.url && c.url.includes(".pdf"));
+      const isDpp = c.contentType === "dpp" || c.topic?.toLowerCase().includes("dpp");
+
+      if (isDpp) groups[topic].dpp.push(c);
+      else if (isVideo) groups[topic].video.push(c);
+      else if (isNotes) groups[topic].notes.push(c);
+      else groups[topic].notes.push(c); // fallback
+    });
+    return groups;
+  }, [contents]);
+
+  return (
+    <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col md:flex-row">
+      {/* Sidebar for Subjects */}
+      <div className="w-full md:w-80 bg-white/5 border-r border-white/10 flex flex-col h-auto md:h-screen sticky top-0 z-10">
+        <div className="p-4 border-b border-white/10 flex items-center gap-3">
+          <button onClick={() => navigate(`/batch/${batchId}`)} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <h2 className="font-bold text-lg">Subjects</h2>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {loadingSubjects ? (
+            <div className="flex justify-center py-8"><div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
+          ) : subjects.length > 0 ? (
+            subjects.map(subject => (
+              <button
+                key={subject._id}
+                onClick={() => {
+                  setSelectedSubject(subject);
+                  fetchContents(subject._id);
+                }}
+                className={cn(
+                  "w-full p-3 rounded-xl flex items-center gap-3 text-left transition-all",
+                  selectedSubject?._id === subject._id ? "bg-blue-600 text-white" : "hover:bg-white/10 text-white/70 hover:text-white"
+                )}
+              >
+                <BookOpen className="w-5 h-5 flex-shrink-0" />
+                <span className="text-sm font-medium truncate">{subject.subject || subject.name || subject.subjectName || subject?.subjectId?.name || "Unknown Subject"}</span>
+              </button>
+            ))
+          ) : (
+            <p className="text-white/50 text-sm text-center py-4">No subjects found.</p>
+          )}
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      <div className="flex-1 p-4 md:p-8 overflow-y-auto h-screen">
+        {!selectedSubject ? (
+          <div className="h-full flex flex-col items-center justify-center text-white/30">
+            <BookOpen className="w-16 h-16 mb-4 opacity-50" />
+            <p>Select a subject from the sidebar to start learning</p>
+          </div>
+        ) : (
+          <div className="max-w-4xl mx-auto">
+            <h1 className="text-2xl md:text-3xl font-bold mb-8">{selectedSubject.subject || selectedSubject.name}</h1>
+            
+            {loadingContents ? (
+              <div className="flex justify-center py-12"><div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>
+            ) : Object.keys(groupedContents).length > 0 ? (
+              <div className="space-y-4">
+                {Object.entries(groupedContents).map(([topic, items]: [string, any]) => (
+                  <div key={topic} className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+                    <button 
+                      onClick={() => setExpandedTopic(expandedTopic === topic ? null : topic)}
+                      className="w-full p-4 flex items-center justify-between hover:bg-white/5 transition-colors text-left"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-500">
+                          <PlayCircle className="w-5 h-5" />
+                        </div>
+                        <h3 className="font-bold text-white/90">{topic}</h3>
+                      </div>
+                      <ChevronRight className={cn("w-5 h-5 text-white/30 transition-transform", expandedTopic === topic && "rotate-90")} />
+                    </button>
+                    
+                    <AnimatePresence>
+                      {expandedTopic === topic && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: "auto", opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="border-t border-white/10"
+                        >
+                          <div className="p-4">
+                            <div className="flex flex-wrap bg-white/5 p-1 rounded-xl border border-white/10 w-fit mb-6">
+                              {[
+                                { id: "video", label: "Video", icon: PlayCircle, count: items.video.length },
+                                { id: "dpp", label: "DPP", icon: Database, count: items.dpp.length },
+                                { id: "notes", label: "Notes", icon: FileText, count: items.notes.length }
+                              ].map((tab) => (
+                                <button
+                                  key={tab.id}
+                                  onClick={() => setActiveTab(tab.id as any)}
+                                  className={cn(
+                                    "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
+                                    activeTab === tab.id 
+                                      ? "bg-blue-600 text-white shadow-lg shadow-blue-600/20" 
+                                      : "text-white/50 hover:text-white hover:bg-white/5"
+                                  )}
+                                >
+                                  <tab.icon className="w-4 h-4" />
+                                  {tab.label}
+                                  {tab.count > 0 && <span className="ml-1 px-1.5 py-0.5 rounded-full bg-white/10 text-[10px]">{tab.count}</span>}
+                                </button>
+                              ))}
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-4">
+                              {items[activeTab].length > 0 ? items[activeTab].map((content: any) => (
+                                <div key={content._id} className="group p-4 bg-white/5 border border-white/10 rounded-xl hover:border-blue-500/50 transition-all flex flex-col md:flex-row gap-4">
+                                  {(content.contentType === 'video' || content.urlType === 'penpencilvdo' || content.videoDetails) && (
+                                    <div className="md:w-48 aspect-video rounded-lg overflow-hidden bg-black border border-white/5 relative flex-shrink-0">
+                                      <img 
+                                        src={content.videoDetails?.image || content.thumbnail || `https://picsum.photos/seed/${content._id}/320/180`} 
+                                        className="w-full h-full object-cover opacity-50 group-hover:opacity-80 transition-opacity"
+                                        alt=""
+                                      />
+                                      <div className="absolute inset-0 flex items-center justify-center">
+                                        <PlayCircle className="w-8 h-8 text-white opacity-80 group-hover:scale-110 transition-transform" />
+                                      </div>
+                                    </div>
+                                  )}
+                                  <div className="flex-1 space-y-2">
+                                    <h4 className="font-bold text-white text-sm line-clamp-2">{content.topic}</h4>
+                                    <p className="text-xs text-white/40">
+                                      {new Date(content.createdAt || content.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                      {content.videoDetails?.duration && ` • ${content.videoDetails.duration}`}
+                                    </p>
+                                    <div className="pt-2 flex flex-wrap gap-2">
+                                      {(content.url || content.videoDetails?.videoUrl) && (
+                                        <Button 
+                                          size="sm" 
+                                          className="bg-blue-600 hover:bg-blue-700 h-8 text-xs gap-2" 
+                                          onClick={() => {
+                                            const isVideo = content.contentType === 'video' || content.urlType === 'penpencilvdo' || content.videoDetails || content.isVideoLecture;
+                                            if (isVideo) {
+                                              navigate('/video-player', {
+                                                state: {
+                                                  videoUrl: content.videoDetails?.videoUrl || content.url,
+                                                  token: localStorage.getItem("pw_token"),
+                                                  title: content.topic,
+                                                  backUrl: `/batch/${batchId}/learn`,
+                                                  content: content
+                                                }
+                                              });
+                                            } else {
+                                              window.open(content.url || content.videoDetails?.videoUrl, '_blank');
+                                            }
+                                          }}
+                                        >
+                                          <ExternalLink className="w-3 h-3" />
+                                          {(content.contentType === 'video' || content.urlType === 'penpencilvdo' || content.videoDetails || content.isVideoLecture) ? 'Watch Now' : 'View PDF'}
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              )) : (
+                                <div className="text-center py-8 text-white/30 text-sm">
+                                  No {activeTab} available for this topic.
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12 text-white/30">
+                <p>No content found for this subject.</p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // --- Main App ---
 
 const SecurityWrapper = ({ children }: { children: React.ReactNode }) => {
@@ -1271,6 +1684,8 @@ export default function App() {
             <Route path="/" element={<LoginPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/batch/:batchId" element={<BatchDetailsPage />} />
+            <Route path="/batch/:batchId/learn" element={<BatchLearnPage />} />
+            <Route path="/video-player" element={<VideoPlayerPage />} />
             <Route path="/admin" element={<AdminLoginPage />} />
             <Route path="/admin/dashboard" element={<AdminDashboard />} />
             <Route path="*" element={<Navigate to="/" replace />} />
